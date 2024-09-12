@@ -62,3 +62,8 @@ export const getImportWebSocketApiHost = () => {
   const host = window.location.host;
   return `${protocol}//${host}/ws/import_files`;
 };
+
+export function logMessage(message: string, data?: any) {
+  const timestamp = new Date().toISOString();
+  console.log(`[${timestamp}] ${message}`, data);
+}

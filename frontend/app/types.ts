@@ -400,6 +400,7 @@ export interface Message {
   cached?: boolean;
   distance?: string;
   context?: string;
+  runId?: string; // Make runId optional
 }
 
 // Setting Fields

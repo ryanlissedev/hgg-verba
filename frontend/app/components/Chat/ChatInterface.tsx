@@ -9,6 +9,7 @@ import { IoIosSend } from "react-icons/io";
 import { BiError } from "react-icons/bi";
 import { IoMdAddCircle } from "react-icons/io";
 import VerbaButton from "../Navigation/VerbaButton";
+import SimpleFeedback from "./SimpleFeedback";
 
 import {
   updateRAGConfig,
@@ -18,7 +19,7 @@ import {
   fetchSuggestions,
   fetchLabels,
 } from "@/app/api";
-import { getWebSocketApiHost } from "@/app/util";
+import { getWebSocketApiHost, logMessage } from "@/app/util";
 import {
   Credentials,
   QueryPayload,
@@ -53,6 +54,16 @@ interface ChatInterfaceProps {
   setDocumentFilter: React.Dispatch<React.SetStateAction<DocumentFilter[]>>;
 }
 
+// Add this interface near the top of the file, after the imports
+interface WebSocketMessage {
+  message: string;
+  finish_reason: string | null;
+  full_text?: string;
+  cached?: boolean;
+  distance?: string;
+  runId?: string;
+}
+
 const ChatInterface: React.FC<ChatInterfaceProps> = ({
   production,
   credentials,
@@ -76,8 +87,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [previewText, setPreviewText] = useState("");
   const lastMessageRef = useRef<null | HTMLDivElement>(null);
   const [socket, setSocket] = useState<WebSocket | null>(null);
-  const [socketOnline, setSocketOnline] = useState(false);
-  const [reconnect, setReconnect] = useState(false);
+  const [socketStatus, setSocketStatus] = useState<"ONLINE" | "OFFLINE">("OFFLINE");
+  const maxRetries = 5; // Maximum number of retries
+  const retryDelay = 2000; // Delay between retries in milliseconds
 
   const [currentSuggestions, setCurrentSuggestions] = useState<Suggestion[]>(
     []
@@ -102,115 +114,90 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   useState("No Embedding Model");
 
   useEffect(() => {
-    setReconnect(true);
-  }, []);
+    const connectWebSocket = async (attempt: number = 1) => {
+      const socketHost = getWebSocketApiHost();
+      const localSocket = new WebSocket(socketHost);
 
-  useEffect(() => {
-    if (RAGConfig) {
-      retrieveDatacount();
-    } else {
-      setCurrentDatacount(0);
-    }
-  }, [currentEmbedding, currentPage, documentFilter]);
+      localSocket.onopen = () => {
+        console.log("WebSocket connection opened to " + socketHost);
+        setSocketStatus("ONLINE");
+      };
 
-  useEffect(() => {
-    setMessages((prev) => {
-      if (prev.length === 0) {
-        return [
-          {
-            type: "system",
-            content: selectedTheme.intro_message.text,
-          },
-        ];
-      }
-      return prev;
-    });
-  }, [selectedTheme.intro_message.text]);
+      localSocket.onmessage = (event) => {
+        let data: WebSocketMessage;
 
-  // Setup WebSocket and messages to /ws/generate_stream
-  useEffect(() => {
-    const socketHost = getWebSocketApiHost();
-    const localSocket = new WebSocket(socketHost);
-
-    localSocket.onopen = () => {
-      console.log("WebSocket connection opened to " + socketHost);
-      setSocketOnline(true);
-    };
-
-    localSocket.onmessage = (event) => {
-      let data;
-
-      if (!isFetching.current) {
-        setPreviewText("");
-        return;
-      }
-
-      try {
-        data = JSON.parse(event.data);
-      } catch (e) {
-        console.error("Received data is not valid JSON:", event.data);
-        return; // Exit early if data isn't valid JSON
-      }
-
-      const newMessageContent = data.message;
-      setPreviewText((prev) => prev + newMessageContent);
-
-      if (data.finish_reason === "stop") {
-        isFetching.current = false;
-        setFetchingStatus("DONE");
-        addStatusMessage("Finished generation", "SUCCESS");
-        const full_text = data.full_text;
-        if (data.cached) {
-          const distance = data.distance;
-          setMessages((prev) => [
-            ...prev,
-            {
-              type: "system",
-              content: full_text,
-              cached: true,
-              distance: distance,
-            },
-          ]);
-        } else {
-          setMessages((prev) => [
-            ...prev,
-            { type: "system", content: full_text },
-          ]);
+        if (!isFetching.current) {
+          setPreviewText("");
+          return;
         }
-        setPreviewText("");
-      }
+
+        try {
+          data = JSON.parse(event.data);
+        } catch (e) {
+          console.error("Received data is not valid JSON:", event.data);
+          return; // Exit early if data isn't valid JSON
+        }
+
+        const newMessageContent = data.message;
+        setPreviewText((prev) => prev + newMessageContent);
+
+        if (data.finish_reason === "stop") {
+          isFetching.current = false;
+          setFetchingStatus("DONE");
+          addStatusMessage("Finished generation", "SUCCESS");
+          const full_text = data.full_text;
+          if (data.cached) {
+            const distance = data.distance;
+            setMessages((prev) => [
+              ...prev,
+              {
+                type: "system",
+                content: full_text || "",
+                cached: true,
+                distance: distance,
+                runId: data.runId,
+              } as Message,
+            ]);
+          } else {
+            setMessages((prev) => [
+              ...prev,
+              { type: "system", content: full_text || "", runId: data.runId } as Message,
+            ]);
+          }
+          setPreviewText("");
+        }
+      };
+
+      localSocket.onerror = (error) => {
+        console.error("WebSocket Error:", error);
+        setSocketStatus("OFFLINE");
+      };
+
+      localSocket.onclose = (event) => {
+        setSocketStatus("OFFLINE");
+        if (event.wasClean) {
+          console.log(`WebSocket closed cleanly, code=${event.code}, reason=${event.reason}`);
+        } else {
+          console.error("WebSocket connection died");
+        }
+        // Retry logic
+        if (attempt < maxRetries) {
+          console.log(`Retrying WebSocket connection... Attempt ${attempt + 1}`);
+          setTimeout(() => connectWebSocket(attempt + 1), retryDelay);
+        }
+      };
+
+      setSocket(localSocket);
     };
 
-    localSocket.onerror = (error) => {
-      console.error("WebSocket Error:", error);
-      setSocketOnline(false);
-      isFetching.current = false;
-      setFetchingStatus("DONE");
-      setReconnect((prev) => !prev);
-    };
-
-    localSocket.onclose = (event) => {
-      if (event.wasClean) {
-        console.log(
-          `WebSocket connection closed cleanly, code=${event.code}, reason=${event.reason}`
-        );
-      } else {
-        console.error("WebSocket connection died");
-      }
-      setSocketOnline(false);
-      isFetching.current = false;
-      setFetchingStatus("DONE");
-      setReconnect((prev) => !prev);
-    };
-
-    setSocket(localSocket);
+    connectWebSocket();
 
     return () => {
-      if (localSocket.readyState !== WebSocket.CLOSED) {
-        localSocket.close();
+      if (socket && socket.readyState !== WebSocket.CLOSED) {
+        socket.close();
       }
     };
-  }, [reconnect]);
+  }, []);
 
   useEffect(() => {
     if (RAGConfig) {
@@ -345,7 +332,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   };
 
   const reconnectToVerba = () => {
-    setReconnect((prevState) => !prevState);
+    setSocket(null); // Clear the current socket
+    // Optionally, you can implement a reconnect logic here
   };
 
   const onSaveConfig = async () => {
@@ -370,6 +358,44 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         setCurrentSuggestions(suggestions.suggestions);
       }
     }
+  };
+
+  const handleFeedbackSubmit = async (runId: string, feedbackType: string, additionalFeedback: string) => {
+    logMessage("Feedback submission triggered", { runId, feedbackType, additionalFeedback });
+    try {
+      const response = await fetch('/api/feedback', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          runId,
+          feedbackType,
+          additionalFeedback,
+          credentials,
+        }),
+      });
+
+      if (response.ok) {
+        logMessage("Feedback submitted successfully", { runId });
+        addStatusMessage("Feedback submitted successfully", "SUCCESS");
+      } else {
+        logMessage("Failed to submit feedback", { runId, status: response.status });
+        addStatusMessage("Failed to submit feedback", "ERROR");
+      }
+    } catch (error) {
+      logMessage("Error submitting feedback", { runId, error });
+      console.error("Error submitting feedback:", error);
+      addStatusMessage("Error submitting feedback", "ERROR");
+    }
+  };
+
+  const getLastRunId = (): string => {
+    if (messages.length > 0) {
+      const lastMessage = messages[messages.length - 1];
+      return lastMessage.type === 'system' && lastMessage.runId ? lastMessage.runId : '';
+    }
+    return '';
   };
 
   return (
@@ -493,7 +519,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                   Icon={MdCancel}
                   className="btn-sm min-w-min max-w-[200px]"
                   icon_size={12}
-                  selected_color="bg-secondary-verba"
+                  selected_color="bg-primary-verba"
                   selected={true}
                   text_size="text-xs"
                   text_class_name="truncate md:max-w-[100px] lg:max-w-[150px]"
@@ -578,7 +604,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
       </div>
 
       <div className="bg-bg-alt-verba rounded-2xl flex gap-2 p-6 items-center justify-end h-min w-full">
-        {socketOnline ? (
+        {socketStatus === "ONLINE" ? (
           <div className="flex gap-2 items-center justify-end w-full relative">
             <div className="relative w-full">
               <textarea
@@ -657,6 +683,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
               }}
               disabled={false}
               selected_color="bg-primary-verba"
+            />
+            <SimpleFeedback
+              runId={getLastRunId()}
+              onSubmit={handleFeedbackSubmit}
             />
           </div>
         ) : (

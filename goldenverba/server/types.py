@@ -256,3 +256,10 @@ class GetDocumentPayload(BaseModel):
 class ResetPayload(BaseModel):
     resetMode: str
     credentials: Credentials
+
+
+class FeedbackPayload(BaseModel):
+    runId: str
+    feedbackType: str
+    additionalFeedback: str
+    credentials: dict

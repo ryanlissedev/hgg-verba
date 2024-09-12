@@ -7,11 +7,15 @@ from goldenverba.components.util import get_environment
 import asyncio
 import instructor
 from langsmith import traceable
-from langsmith.wrappers import wrap_openai
+from langsmith.run_helpers import get_current_run_tree
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
+import logging
 
 load_dotenv()
+
+# Set up logging
+logger = logging.getLogger(__name__)
 
 class AnswerResponse(BaseModel):
     """
@@ -55,7 +59,7 @@ class OpenAIGenerator(Generator):
                 values=[],
             )
 
-        # Initialize OpenAI client with LangSmith
+        # Initialize OpenAI client
         self.client = None
 
     async def initialize_client(self, config):
@@ -67,17 +71,30 @@ class OpenAIGenerator(Generator):
         )
 
         async_client = AsyncOpenAI(api_key=openai_key, base_url=openai_url)
-        wrapped_client = wrap_openai(async_client)
-        self.client = instructor.apatch(wrapped_client)
+        self.client = instructor.apatch(async_client)
 
-    @traceable(name="generate-answer")
-    async def generate_answer(self, messages: list, model: str) -> AnswerResponse:
-        return await self.client.chat.completions.create(
+    @traceable
+    async def generate_answer(self, messages: list, model: str) -> tuple[AnswerResponse, str]:
+        # Log the model being used for answer generation
+        logger.info(f"Generating answer with model: {model}")
+
+        # Create the chat completion request
+        response = await self.client.chat.completions.create(
             model=model,
             response_model=AnswerResponse,
             max_retries=2,
             messages=messages,
         )
+
+        # Retrieve the current run details
+        run = get_current_run_tree()
+        run_id = run.id if run else "unknown"
+
+        # Log the generated answer and associated run_id
+        logger.info(f"Answer generated, run_id: {run_id}")
+        
+        # Return the response and the run_id
+        return response, run_id
 
     async def generate_stream(
         self,
@@ -95,11 +112,14 @@ class OpenAIGenerator(Generator):
         messages = self.prepare_messages(query, context, conversation, system_message)
 
         try:
-            response = await self.generate_answer(messages, model)
-            yield {"message": response.answer, "finish_reason": None}
-            yield {"message": f"\n\nReasoning: {response.reasoning}", "finish_reason": "stop"}
+            logger.info(f"Generating stream response for query: {query[:50]}...")
+            response, run_id = await self.generate_answer(messages, model)
+            logger.info(f"Stream response generated, run_id: {run_id}")
+            yield {"message": response.answer, "finish_reason": None, "runId": run_id}
+            yield {"message": f"\n\nReasoning: {response.reasoning}", "finish_reason": "stop", "runId": run_id}
         except Exception as e:
-            yield {"message": f"Error: {str(e)}", "finish_reason": "error"}
+            logger.error(f"Error generating stream response: {str(e)}")
+            yield {"message": f"Error: {str(e)}", "finish_reason": "error", "runId": ""}
 
     def prepare_messages(
         self, query: str, context: str, conversation: list[dict], system_message: str

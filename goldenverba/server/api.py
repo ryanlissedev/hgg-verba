@@ -36,7 +36,11 @@ from goldenverba.server.types import (
     GetVectorPayload,
     DataBatchPayload,
     ChunksPayload,
+    FeedbackPayload,
 )
+
+from langsmith import Client as LangSmithClient
+from uuid import UUID
 
 load_dotenv()
 
@@ -209,9 +213,14 @@ async def websocket_generate_stream(websocket: WebSocket):
                 payload.context,
                 payload.conversation,
             ):
+                # Ensure that any UUIDs are converted to strings
+                if isinstance(chunk.get("runId"), UUID):
+                    chunk["runId"] = str(chunk["runId"])
+
                 full_text += chunk["message"]
                 if chunk["finish_reason"] == "stop":
                     chunk["full_text"] = full_text
+                msg.good(f"Sending chunk: {chunk}")  # Log the chunk being sent
                 await websocket.send_json(chunk)
 
         except WebSocketDisconnect:
@@ -221,9 +230,9 @@ async def websocket_generate_stream(websocket: WebSocket):
         except Exception as e:
             msg.fail(f"WebSocket Error: {str(e)}")
             await websocket.send_json(
-                {"message": e, "finish_reason": "stop", "full_text": str(e)}
+                {"message": str(e), "finish_reason": "stop", "full_text": str(e)}
             )
-        msg.good("Succesfully streamed answer")
+        msg.good("Successfully streamed answer")
 
 
 @app.websocket("/ws/import_files")
@@ -785,3 +794,26 @@ async def delete_suggestion(payload: DeleteSuggestionPayload):
                 "status": 400,
             }
         )
+
+
+@app.post("/api/feedback")
+async def submit_feedback(payload: FeedbackPayload):
+    logger.info(f"Received feedback request: runId={payload.runId}, feedbackType={payload.feedbackType}")
+    try:
+        client = LangSmithClient()
+        
+        feedback_score = 1 if payload.feedbackType == 'positive' else 0
+        
+        feedback = client.create_feedback(
+            run_id=payload.runId,
+            key="user_rating",
+            score=feedback_score,
+            comment=payload.additionalFeedback,
+            value=payload.feedbackType
+        )
+        
+        logger.info(f"Feedback submitted successfully: feedback_id={feedback.id}")
+        return {"status": "success", "feedback_id": str(feedback.id)}
+    except Exception as e:
+        logger.error(f"Error submitting feedback: {str(e)}")
+        return {"status": "error", "message": str(e)}
