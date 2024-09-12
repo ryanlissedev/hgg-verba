@@ -1,31 +1,42 @@
+# OpenAIGenerator.py
 import os
 from dotenv import load_dotenv
 from goldenverba.components.interfaces import Generator
 from goldenverba.components.types import InputConfig
 from goldenverba.components.util import get_environment
-import httpx
-import json
+import asyncio
+import instructor
+from langsmith import traceable
+from langsmith.wrappers import wrap_openai
+from openai import AsyncOpenAI
+from pydantic import BaseModel, Field
 
 load_dotenv()
 
+class AnswerResponse(BaseModel):
+    """
+    Model for the answer response.
+    """
+    answer: str = Field(..., description="The generated answer to the query")
+    reasoning: str = Field(..., description="The reasoning behind the answer")
 
 class OpenAIGenerator(Generator):
     """
-    OpenAI Generator.
+    OpenAI Generator using LangSmith and Instructor.
     """
 
     def __init__(self):
         super().__init__()
         self.name = "OpenAI"
-        self.description = "Using OpenAI LLM models to generate answers to queries"
+        self.description = "Using OpenAI LLM models with LangSmith and Instructor to generate answers to queries"
         self.context_window = 10000
 
-        models = ["gpt-4o", "gpt-3.5-turbo"]
+        models = ["gpt-4o-mini", "gpt-4o"]
 
         self.config["Model"] = InputConfig(
             type="dropdown",
             value=models[0],
-            description="Select an OpenAI Embedding Model",
+            description="Select an OpenAI Model",
             values=models,
         )
 
@@ -44,15 +55,10 @@ class OpenAIGenerator(Generator):
                 values=[],
             )
 
-    async def generate_stream(
-        self,
-        config: dict,
-        query: str,
-        context: str,
-        conversation: list[dict] = [],
-    ):
-        system_message = config.get("System Message").value
-        model = config.get("Model", {"value": "gpt-3.5-turbo"}).value
+        # Initialize OpenAI client with LangSmith
+        self.client = None
+
+    async def initialize_client(self, config):
         openai_key = get_environment(
             config, "API Key", "OPENAI_API_KEY", "No OpenAI API Key found"
         )
@@ -60,42 +66,40 @@ class OpenAIGenerator(Generator):
             config, "URL", "OPENAI_BASE_URL", "https://api.openai.com/v1"
         )
 
+        async_client = AsyncOpenAI(api_key=openai_key, base_url=openai_url)
+        wrapped_client = wrap_openai(async_client)
+        self.client = instructor.from_openai(wrapped_client, mode=instructor.Mode.TOOLS)
+
+    @traceable(name="generate-answer")
+    async def generate_answer(self, messages: list, model: str) -> AnswerResponse:
+        return await self.client.chat.completions.create(
+            model=model,
+            response_model=AnswerResponse,
+            max_retries=2,
+            messages=messages,
+        )
+
+    async def generate_stream(
+        self,
+        config: dict,
+        query: str,
+        context: str,
+        conversation: list[dict] = [],
+    ):
+        if not self.client:
+            await self.initialize_client(config)
+
+        system_message = config.get("System Message").value
+        model = config.get("Model", {"value": "gpt-4o-mini"}).value
+
         messages = self.prepare_messages(query, context, conversation, system_message)
 
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {openai_key}",
-        }
-        data = {
-            "messages": messages,
-            "model": model,
-            "stream": True,
-        }
-
-        async with httpx.AsyncClient() as client:
-            async with client.stream(
-                "POST",
-                f"{openai_url}/chat/completions",
-                json=data,
-                headers=headers,
-                timeout=None,
-            ) as response:
-                async for line in response.aiter_lines():
-                    if line.startswith("data: "):
-                        if line.strip() == "data: [DONE]":
-                            break
-                        json_line = json.loads(line[6:])
-                        choice = json_line["choices"][0]
-                        if "delta" in choice and "content" in choice["delta"]:
-                            yield {
-                                "message": choice["delta"]["content"],
-                                "finish_reason": choice.get("finish_reason"),
-                            }
-                        elif "finish_reason" in choice:
-                            yield {
-                                "message": "",
-                                "finish_reason": choice["finish_reason"],
-                            }
+        try:
+            response = await self.generate_answer(messages, model)
+            yield {"message": response.answer, "finish_reason": None}
+            yield {"message": f"\n\nReasoning: {response.reasoning}", "finish_reason": "stop"}
+        except Exception as e:
+            yield {"message": f"Error: {str(e)}", "finish_reason": "error"}
 
     def prepare_messages(
         self, query: str, context: str, conversation: list[dict], system_message: str
