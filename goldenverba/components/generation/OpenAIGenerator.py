@@ -68,7 +68,7 @@ class OpenAIGenerator(Generator):
 
         async_client = AsyncOpenAI(api_key=openai_key, base_url=openai_url)
         wrapped_client = wrap_openai(async_client)
-        self.client = instructor.from_openai(wrapped_client, mode=instructor.Mode.TOOLS)
+        self.client = instructor.apatch(wrapped_client)
 
     @traceable(name="generate-answer")
     async def generate_answer(self, messages: list, model: str) -> AnswerResponse:
