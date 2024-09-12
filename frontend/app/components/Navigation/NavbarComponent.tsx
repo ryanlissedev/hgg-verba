@@ -6,7 +6,6 @@ import { IoChatbubbleSharp } from "react-icons/io5";
 import { IoDocumentSharp } from "react-icons/io5";
 import { IoMdAddCircle } from "react-icons/io";
 import { IoSettingsSharp } from "react-icons/io5";
-import { FaGithub } from "react-icons/fa";
 import { TiThMenu } from "react-icons/ti";
 
 import { closeOnClick } from "@/app/util";
@@ -14,7 +13,6 @@ import { closeOnClick } from "@/app/util";
 import VerbaButton from "./VerbaButton";
 
 import NavbarButton from "./NavButton";
-import { getGitHubStars } from "./util";
 
 interface NavbarProps {
   imageSrc: string;
@@ -28,13 +26,6 @@ interface NavbarProps {
   ) => void;
 }
 
-const formatGitHubNumber = (num: number): string => {
-  if (num >= 1000) {
-    return (num / 1000).toFixed(1).replace(/\.0$/, "") + "k";
-  }
-  return num.toString();
-};
-
 const Navbar: React.FC<NavbarProps> = ({
   imageSrc,
   title,
@@ -43,39 +34,6 @@ const Navbar: React.FC<NavbarProps> = ({
   setCurrentPage,
   production,
 }) => {
-  const [gitHubStars, setGitHubStars] = useState("0");
-  const icon_size = 18;
-
-  useEffect(() => {
-    // Declare an asynchronous function inside the useEffect
-    const fetchGitHubStars = async () => {
-      try {
-        // Await the asynchronous call to getGitHubStars
-        const response: number = await getGitHubStars();
-
-        if (response) {
-          // Now response is the resolved value of the promise
-          const formatedStars = formatGitHubNumber(response);
-          setGitHubStars(formatedStars);
-        }
-      } catch (error) {
-        console.error("Failed to fetch GitHub stars:", error);
-      }
-    };
-
-    // Call the async function
-    fetchGitHubStars();
-  }, []);
-
-  const handleGitHubClick = () => {
-    // Open a new tab with the specified URL
-    window.open(
-      "https://github.com/weaviate/verba",
-      "_blank",
-      "noopener,noreferrer"
-    );
-  };
-
   return (
     <div className="flex justify-between items-center mb-10">
       {/* Logo, Title, Subtitle */}
@@ -192,16 +150,6 @@ const Navbar: React.FC<NavbarProps> = ({
           <div
             className={`sm:h-[3vh] lg:h-[5vh] mx-1 hidden md:block bg-text-alt-verba w-px`}
           ></div>
-          <VerbaButton
-            title={gitHubStars}
-            Icon={FaGithub}
-            onClick={handleGitHubClick}
-            className="hidden md:block"
-            text_size="text-xs"
-            icon_size={18}
-            disabled={false}
-            selected={false}
-          />
         </div>
       </div>
     </div>

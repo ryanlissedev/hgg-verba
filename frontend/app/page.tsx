@@ -35,7 +35,7 @@ export default function Home() {
   // Page States
   const [currentPage, setCurrentPage] = useState("CHAT");
   const [production, setProduction] = useState<"Local" | "Demo" | "Production">(
-    "Local"
+    "Production"
   );
   const [gtag, setGtag] = useState("");
 
@@ -46,7 +46,7 @@ export default function Home() {
     Weaviate: WeaviateTheme,
     WCD: WCDTheme,
   });
-  const [selectedTheme, setSelectedTheme] = useState<Theme>(themes["Weaviate"]);
+  const [selectedTheme, setSelectedTheme] = useState<Theme>(themes["WCD"]);
 
   const fontKey = selectedTheme.font.value as FontKey; // Safely cast if you're sure, or use a check
   const fontClassName = fontKey ? fonts[fontKey]?.className || "" : "";
@@ -56,9 +56,9 @@ export default function Home() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [isLoaded, setIsLoaded] = useState(false);
   const [credentials, setCredentials] = useState<Credentials>({
-    deployment: "Local",
-    url: "",
-    key: "",
+    deployment: "Weaviate",
+    url: process.env.WEAVIATE_URL_VERBA || "",
+    key: process.env.WEAVIATE_API_KEY_VERBA || "",
   });
 
   // RAG Config
@@ -78,7 +78,7 @@ export default function Home() {
         setGtag(health_data.gtag);
         setIsHealthy(true);
         setCredentials({
-          deployment: "Local",
+          deployment: "Weaviate",
           url: health_data.deployments.WEAVIATE_URL_VERBA,
           key: health_data.deployments.WEAVIATE_API_KEY_VERBA,
         });
@@ -206,7 +206,7 @@ export default function Home() {
             isLoaded ? "opacity-100" : "opacity-0"
           } flex flex-col gap-2 p-5`}
         >
-          <GettingStartedComponent addStatusMessage={addStatusMessage} />
+          {/* <GettingStartedComponent addStatusMessage={addStatusMessage} /> */}
 
           <div>
             <Navbar

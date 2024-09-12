@@ -162,7 +162,7 @@ const LoginView: React.FC<LoginViewProps> = ({
 
   const [selectedDeployment, setSelectedDeployment] = useState<
     "Weaviate" | "Docker" | "Local"
-  >("Local");
+  >("Weaviate");
 
   const [weaviateURL, setWeaviateURL] = useState(credentials.url);
   const [weaviateAPIKey, setWeaviateAPIKey] = useState(credentials.key);
